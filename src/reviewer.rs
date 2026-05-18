@@ -1941,8 +1941,8 @@ impl Reviewer {
             None => return Ok(()),
         };
 
-        let policy =
-            EmailPolicyConfig::load("email_policy.toml").unwrap_or_else(|_| EmailPolicyConfig {
+        let policy = EmailPolicyConfig::load(&ctx.settings.review.email_policy_path)
+            .unwrap_or_else(|_| EmailPolicyConfig {
                 defaults: Default::default(),
                 subsystems: Default::default(),
             });
@@ -2155,8 +2155,22 @@ impl Reviewer {
                         findings_arr.len()
                     ));
 
-                    let mut sorted_findings = findings_arr.to_vec();
-                    sorted_findings.sort_by(|a, b| {
+                    let mut new_findings = Vec::new();
+                    let mut preexisting_findings = Vec::new();
+
+                    for f in findings_arr {
+                        let preexisting = f
+                            .get("preexisting")
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(false);
+                        if preexisting {
+                            preexisting_findings.push(f.clone());
+                        } else {
+                            new_findings.push(f.clone());
+                        }
+                    }
+
+                    let sort_by_severity = |a: &Value, b: &Value| {
                         let sev_a = Severity::from_str(
                             a.get("severity").and_then(|v| v.as_str()).unwrap_or("Low"),
                         );
@@ -2164,9 +2178,12 @@ impl Reviewer {
                             b.get("severity").and_then(|v| v.as_str()).unwrap_or("Low"),
                         );
                         sev_b.cmp(&sev_a)
-                    });
+                    };
 
-                    for f in sorted_findings {
+                    new_findings.sort_by(sort_by_severity);
+                    preexisting_findings.sort_by(sort_by_severity);
+
+                    let format_finding = |f: &Value| {
                         let problem = f
                             .get("problem")
                             .and_then(|v| v.as_str())
@@ -2176,8 +2193,29 @@ impl Reviewer {
                             .get("severity")
                             .and_then(|v| v.as_str())
                             .unwrap_or("Unknown");
-                        header.push_str(&format!("- [{}] {}\n", severity, problem));
+                        format!("- [{}] {}\n", severity, problem)
+                    };
+
+                    if !new_findings.is_empty() && !preexisting_findings.is_empty() {
+                        header.push_str("\nNew issues:\n");
+                        for f in &new_findings {
+                            header.push_str(&format_finding(f));
+                        }
+                        header.push_str("\nPre-existing issues:\n");
+                        for f in &preexisting_findings {
+                            header.push_str(&format_finding(f));
+                        }
+                    } else if !new_findings.is_empty() {
+                        for f in &new_findings {
+                            header.push_str(&format_finding(f));
+                        }
+                    } else if !preexisting_findings.is_empty() {
+                        header.push_str("\nPre-existing issues:\n");
+                        for f in &preexisting_findings {
+                            header.push_str(&format_finding(f));
+                        }
                     }
+
                     header.push_str("--\n\n");
                 }
 
@@ -2875,6 +2913,245 @@ echo '{"patchset_id": 1, "patches": [{"index": 1, "status": "applied"}]}'
             err.to_string().contains("Output token budget exceeded"),
             "unexpected error: {err}"
         );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_queue_notifications_split_summary() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let policy_path = temp_dir.path().join("email_policy.toml");
+        std::fs::write(
+            &policy_path,
+            r#"
+            [defaults]
+            mute_all = false
+            reply_all = true
+            "#,
+        )?;
+
+        let mut settings = Settings::new()?;
+        settings.database.url = ":memory:".to_string();
+        settings.review.email_policy_path = policy_path.to_str().unwrap().to_string();
+        settings.smtp = Some(crate::settings::SmtpSettings {
+            server: "localhost".to_string(),
+            port: 25,
+            username: None,
+            password: None,
+            sender_address: "bot@sashiko.dev".to_string(),
+            reply_to: None,
+            dry_run: false, // We want 'Pending' status to be able to query it easily if needed, or just query it anyway.
+        });
+
+        let db = Arc::new(Database::new(&settings.database).await?);
+        db.migrate().await?;
+
+        let thread_id = db.create_thread("msg_id_1", "Subject", 1000).await?;
+        db.create_message(
+            "msg_id_p1",
+            thread_id,
+            None,
+            "Author <author@example.com>",
+            "Subject",
+            1000,
+            "Body with ---\nSigned-off-by: Author <author@example.com>",
+            "to@example.com",
+            "cc@example.com",
+            None,
+            None,
+        )
+        .await?;
+
+        let ps_id = db
+            .create_patchset(
+                thread_id, None, "msg_id_1", "Subject", "Author", 1000, 1, 1, "", "", None, 1,
+                None, false, None, None,
+            )
+            .await?
+            .unwrap();
+
+        let p_id_1 = db.create_patch(ps_id, "msg_id_p1", 1, "diff").await?;
+
+        let ctx = ReviewContext {
+            semaphore: Arc::new(Semaphore::new(1)),
+            db: db.clone(),
+            settings,
+            baseline_registry: Arc::new(
+                crate::baseline::BaselineRegistry::new(Path::new("."), None).unwrap(),
+            ),
+            quota_manager: Arc::new(QuotaManager::new()),
+            target_review_count: 1,
+            provider: Arc::new(MockProvider),
+        };
+
+        // Scenario 1: Mixed findings
+        let findings_mixed = vec![
+            json!({
+                "problem": "New High issue",
+                "severity": "High",
+                "preexisting": false
+            }),
+            json!({
+                "problem": "Preexisting Medium issue",
+                "severity": "Medium",
+                "preexisting": true
+            }),
+            json!({
+                "problem": "New Low issue",
+                "severity": "Low",
+                "preexisting": false
+            }),
+        ];
+
+        Reviewer::queue_notifications(
+            &ctx,
+            p_id_1,
+            "msg_id_p1",
+            "msg_id_1",
+            1, // index
+            "inline review content",
+            Some(&findings_mixed),
+            "summary",
+        )
+        .await?;
+
+        // Verify Scenario 1
+        let mut rows = db
+            .conn
+            .query(
+                "SELECT body FROM email_outbox WHERE patch_id = ?",
+                libsql::params![p_id_1],
+            )
+            .await?;
+        let row = rows.next().await?.expect("Expected email in outbox");
+        let body: String = row.get(0)?;
+        let expected_mixed_body = "\
+Thank you for your contribution! Sashiko AI review found 3 potential issue(s) to consider:
+
+New issues:
+- [High] New High issue
+- [Low] New Low issue
+
+Pre-existing issues:
+- [Medium] Preexisting Medium issue
+--
+
+inline review content\n\n-- \nSashiko AI review · https://sashiko.dev/#/patchset/msg_id_1?part=1";
+        assert_eq!(body, expected_mixed_body);
+
+        // Setup for Scenario 2: Only New
+        db.create_message(
+            "msg_id_p2",
+            thread_id,
+            None,
+            "Author <author@example.com>",
+            "Subject 2",
+            1000,
+            "Body 2",
+            "to@example.com",
+            "cc@example.com",
+            None,
+            None,
+        )
+        .await?;
+        let p_id_2 = db.create_patch(ps_id, "msg_id_p2", 2, "diff").await?;
+
+        let findings_new_only = vec![
+            json!({
+                "problem": "New High issue",
+                "severity": "High",
+                "preexisting": false
+            }),
+            json!({
+                "problem": "New Low issue",
+                "severity": "Low",
+                "preexisting": false
+            }),
+        ];
+
+        Reviewer::queue_notifications(
+            &ctx,
+            p_id_2,
+            "msg_id_p2",
+            "msg_id_1",
+            2, // index
+            "inline review content 2",
+            Some(&findings_new_only),
+            "summary",
+        )
+        .await?;
+
+        let mut rows = db
+            .conn
+            .query(
+                "SELECT body FROM email_outbox WHERE patch_id = ?",
+                libsql::params![p_id_2],
+            )
+            .await?;
+        let row = rows.next().await?.expect("Expected email in outbox");
+        let body: String = row.get(0)?;
+        let expected_new_only_body = "\
+Thank you for your contribution! Sashiko AI review found 2 potential issue(s) to consider:
+- [High] New High issue
+- [Low] New Low issue
+--
+
+inline review content 2\n\n-- \nSashiko AI review · https://sashiko.dev/#/patchset/msg_id_1?part=2";
+        assert_eq!(body, expected_new_only_body);
+
+        // Setup for Scenario 3: Only Pre-existing
+        db.create_message(
+            "msg_id_p3",
+            thread_id,
+            None,
+            "Author <author@example.com>",
+            "Subject 3",
+            1000,
+            "Body 3",
+            "to@example.com",
+            "cc@example.com",
+            None,
+            None,
+        )
+        .await?;
+        let p_id_3 = db.create_patch(ps_id, "msg_id_p3", 3, "diff").await?;
+
+        let findings_preexisting_only = vec![json!({
+            "problem": "Preexisting Medium issue",
+            "severity": "Medium",
+            "preexisting": true
+        })];
+
+        Reviewer::queue_notifications(
+            &ctx,
+            p_id_3,
+            "msg_id_p3",
+            "msg_id_1",
+            3, // index
+            "inline review content 3",
+            Some(&findings_preexisting_only),
+            "summary",
+        )
+        .await?;
+
+        let mut rows = db
+            .conn
+            .query(
+                "SELECT body FROM email_outbox WHERE patch_id = ?",
+                libsql::params![p_id_3],
+            )
+            .await?;
+        let row = rows.next().await?.expect("Expected email in outbox");
+        let body: String = row.get(0)?;
+        let expected_preexisting_only_body = "\
+Thank you for your contribution! Sashiko AI review found 1 potential issue(s) to consider:
+
+Pre-existing issues:
+- [Medium] Preexisting Medium issue
+--
+
+inline review content 3\n\n-- \nSashiko AI review · https://sashiko.dev/#/patchset/msg_id_1?part=3";
+        assert_eq!(body, expected_preexisting_only_body);
+
         Ok(())
     }
 }

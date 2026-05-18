@@ -308,6 +308,8 @@ pub struct ReviewSettings {
     pub max_files_touched: usize,
     #[serde(default)]
     pub ignore_files: Vec<String>,
+    #[serde(default = "default_email_policy_path")]
+    pub email_policy_path: String,
     /// Maximum cumulative non-cached tokens (uncached input + output) across all turns in a
     /// single review. Cached input tokens are excluded because they cost ~10x less and don't
     /// reflect runaway model behaviour. At Sonnet 4.6 pricing ($3/M uncached input, $15/M
@@ -349,6 +351,10 @@ fn default_review_timeout() -> u64 {
 
 fn default_max_retries() -> u32 {
     3
+}
+
+fn default_email_policy_path() -> String {
+    "email_policy.toml".to_string()
 }
 
 fn default_log_level() -> String {
