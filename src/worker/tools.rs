@@ -323,7 +323,8 @@ impl ToolBox {
                 (None, None) => None,
             };
 
-            let res = Truncator::truncate_code(&content, focus, 20_000);
+            let max_tokens = if focus.is_some() { 20_000 } else { 10_000 };
+            let res = Truncator::truncate_code(&content, focus, max_tokens);
             let truncated = res.content;
             let is_truncated = res.truncated;
 
