@@ -75,6 +75,8 @@ spec:
               value: "8080"
             - name: SASHIKO__AI__MODEL
               value: "gemini-3.1-pro-preview"
+            - name: SASHIKO__AI__MAX_INTERACTIONS
+              value: "100"
             - name: SASHIKO__MAILING_LISTS__TRACK
               value: >-
                 bpf,cgroups,damon,dmaengine,driver-core,dwarves,kvm,
