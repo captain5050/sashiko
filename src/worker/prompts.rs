@@ -634,9 +634,6 @@ impl Worker {
         git_metadata.push_str("\n\n=== Active Git Metadata ===\n");
         git_metadata.push_str(&format!("Target Commit SHA: {}\n", target_commit_sha));
         git_metadata.push_str(&format!("Baseline SHA: {}\n", baseline_sha));
-        if let Some(ref range) = self.series_range {
-            git_metadata.push_str(&format!("Series Range: {}\n", range));
-        }
         git_metadata.push_str("===========================\n");
 
         let mut dynamic_context = String::new();
