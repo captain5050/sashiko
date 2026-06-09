@@ -219,3 +219,9 @@ cc = ["linux-scsi@vger.kernel.org"]
 lists = ["linux-target@vger.kernel.org"]
 reply_to_author = true
 cc = ["linux-target@vger.kernel.org"]
+
+[subsystems.linux-s390]
+lists = ["linux-s390@vger.kernel.org"]
+reply_to_author = true
+cc = ["linux-s390@vger.kernel.org", "Heiko Carstens <hca@linux.ibm.com>", "Vasily Gorbik <gor@linux.ibm.com>", "Alexander Gordeev <agordeev@linux.ibm.com>"]
+
