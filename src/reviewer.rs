@@ -19,7 +19,7 @@ use crate::ai::{
     create_provider_cached,
 };
 use crate::baseline::{BaselineRegistry, BaselineResolution, extract_files_from_diff};
-use crate::db::{AiInteractionParams, Database, Finding, PatchsetRow, Severity, ToolUsage};
+use crate::db::{AiInteractionParams, Database, Finding, PatchsetRow, Severity};
 use crate::email_policy::EmailPolicyConfig;
 use crate::email_router::{Action as EmailAction, EmailRouter};
 use crate::git_ops::{GitWorktree, ensure_remote, get_commit_hash};
@@ -1166,33 +1166,6 @@ impl Reviewer {
                     } else {
                         None
                     };
-
-                    if let Some(h) = history.and_then(|h| h.as_array()) {
-                        // Tool usage recording (same as before)
-                        for item in h {
-                            if let Some(role) = item.get("role").and_then(|r| r.as_str())
-                                && role == "assistant"
-                                && let Some(calls) =
-                                    item.get("tool_calls").and_then(|c| c.as_array())
-                            {
-                                for call in calls {
-                                    let name = call["function_name"].as_str().unwrap_or("unknown");
-                                    let args = call["arguments"].to_string();
-                                    let _ = ctx
-                                        .db
-                                        .create_tool_usage(ToolUsage {
-                                            review_id,
-                                            provider: ctx.settings.ai.provider.clone(),
-                                            model: ctx.settings.ai.model.clone(),
-                                            tool_name: name.to_string(),
-                                            arguments: Some(args),
-                                            output_length: 0,
-                                        })
-                                        .await;
-                                }
-                            }
-                        }
-                    }
 
                     let interaction_id = if let Some(tokens_in) = json_output["tokens_in"].as_u64()
                     {
