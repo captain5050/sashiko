@@ -17,7 +17,8 @@ use async_trait::async_trait;
 use serde_json::Value;
 
 use super::{
-    AiMessage, AiProvider, AiRequest, AiResponse, AiResponseFormat, AiRole, AiTool, AiUsage,
+    AiErrorClass, AiMessage, AiProvider, AiRequest, AiResponse, AiResponseFormat, AiRole, AiTool,
+    AiUsage, ToolCall, classify_ai_error,
 };
 
 /// The unified result of executing an [`LlmSession`].
@@ -100,6 +101,17 @@ pub trait LlmSession: Send {
         anyhow::bail!("Tool execution not implemented for this session: {}", name)
     }
 
+    /// Executes multiple tool calls requested by the LLM.
+    /// Default implementation runs them sequentially.
+    async fn call_tools(&mut self, calls: Vec<ToolCall>) -> Result<Vec<(String, Value)>> {
+        let mut results = Vec::with_capacity(calls.len());
+        for call in calls {
+            let res = self.call_tool(&call.function_name, call.arguments).await?;
+            results.push((call.id, res));
+        }
+        Ok(results)
+    }
+
     /// Validates the final response content.
     fn validate(&mut self, response: &AiResponse) -> Result<Self::Output, ValidationError>;
 
@@ -124,6 +136,8 @@ pub struct SessionRunner<'a> {
     provider: &'a dyn AiProvider,
     max_turns: usize,
     max_validation_attempts: usize,
+    max_transient_retries: usize,
+    max_provider_error_retries: usize,
 }
 
 impl<'a> SessionRunner<'a> {
@@ -133,6 +147,8 @@ impl<'a> SessionRunner<'a> {
             provider,
             max_turns: 15,
             max_validation_attempts: 3,
+            max_transient_retries: 5,
+            max_provider_error_retries: 3,
         }
     }
 
@@ -145,6 +161,18 @@ impl<'a> SessionRunner<'a> {
     /// Configures the maximum conversational turns.
     pub fn with_max_turns(mut self, turns: usize) -> Self {
         self.max_turns = turns;
+        self
+    }
+
+    /// Configures the maximum transient and rate-limit retries.
+    pub fn with_max_transient_retries(mut self, retries: usize) -> Self {
+        self.max_transient_retries = retries;
+        self
+    }
+
+    /// Configures the maximum provider error retries.
+    pub fn with_max_provider_error_retries(mut self, retries: usize) -> Self {
+        self.max_provider_error_retries = retries;
         self
     }
 
@@ -173,6 +201,8 @@ impl<'a> SessionRunner<'a> {
 
         let mut turns = 0;
         let mut validation_attempts = 0;
+        let mut transient_retries = 0;
+        let mut provider_error_retries = 0;
         let mut total_prompt_tokens = 0;
         let mut total_completion_tokens = 0;
         let mut total_cached_tokens = 0;
@@ -194,21 +224,55 @@ impl<'a> SessionRunner<'a> {
 
             let resp = match self.provider.generate_content(request).await {
                 Ok(r) => r,
-                Err(e) => match session.handle_provider_error(&e, validation_attempts) {
-                    ErrorAction::RetryWithFeedback(feedback) => {
-                        let msg = AiMessage {
-                            role: AiRole::User,
-                            content: Some(feedback.clone()),
-                            thought: None,
-                            thought_signature: None,
-                            tool_calls: None,
-                            tool_call_id: None,
-                        };
-                        history.push(msg.clone());
-                        log_history.push(msg);
+                Err(e) => match classify_ai_error(&e) {
+                    AiErrorClass::RateLimit { retry_after }
+                    | AiErrorClass::Transient { retry_after } => {
+                        transient_retries += 1;
+                        if transient_retries > self.max_transient_retries {
+                            anyhow::bail!(
+                                "Session failed after {} transient/rate-limit errors. Last error: {}",
+                                self.max_transient_retries,
+                                e
+                            );
+                        }
+                        tracing::warn!(
+                            "API error ({}), pausing for {:?} before retry (attempt {}/{})...",
+                            e,
+                            retry_after,
+                            transient_retries,
+                            self.max_transient_retries
+                        );
+                        tokio::time::sleep(retry_after).await;
+                        turns = turns.saturating_sub(1);
                         continue;
                     }
-                    ErrorAction::Fail => return Err(e),
+                    AiErrorClass::Fatal => {
+                        match session.handle_provider_error(&e, provider_error_retries) {
+                            ErrorAction::RetryWithFeedback(feedback) => {
+                                provider_error_retries += 1;
+                                if provider_error_retries > self.max_provider_error_retries {
+                                    anyhow::bail!(
+                                        "Session failed after {} provider error retries. Last error: {}",
+                                        self.max_provider_error_retries,
+                                        e
+                                    );
+                                }
+                                let msg = AiMessage {
+                                    role: AiRole::User,
+                                    content: Some(feedback.clone()),
+                                    thought: None,
+                                    thought_signature: None,
+                                    tool_calls: None,
+                                    tool_call_id: None,
+                                };
+                                history.push(msg.clone());
+                                log_history.push(msg);
+                                turns = turns.saturating_sub(1);
+                                continue;
+                            }
+                            ErrorAction::Fail => return Err(e),
+                        }
+                    }
                 },
             };
 
@@ -235,17 +299,15 @@ impl<'a> SessionRunner<'a> {
 
             // Handle Tool Calls
             if let Some(tool_calls) = &resp.tool_calls {
-                for call in tool_calls {
-                    let result = session
-                        .call_tool(&call.function_name, call.arguments.clone())
-                        .await?;
+                let results = session.call_tools(tool_calls.clone()).await?;
+                for (call_id, result) in results {
                     let tool_msg = AiMessage {
                         role: AiRole::Tool,
                         content: Some(result.to_string()),
                         thought: None,
                         thought_signature: None,
                         tool_calls: None,
-                        tool_call_id: Some(call.id.clone()),
+                        tool_call_id: Some(call_id),
                     };
                     history.push(tool_msg.clone());
                     log_history.push(tool_msg);
@@ -288,6 +350,7 @@ impl<'a> SessionRunner<'a> {
                     };
                     history.push(msg.clone());
                     log_history.push(msg);
+                    turns = turns.saturating_sub(1);
                 }
                 Result::Err(ValidationError::Fatal(err)) => {
                     anyhow::bail!("Fatal validation error: {}", err);
