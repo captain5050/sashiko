@@ -67,6 +67,7 @@
 
         @media (prefers-color-scheme: dark) {
             :root {
+                color-scheme: dark;
                 --bg: #0d1117;
                 --border: #30363d;
                 --border-light: #21262d;
@@ -1198,24 +1199,14 @@
             settings: {
                 theme: 'auto',
                 colorblind: false
-            }
+            },
+            statsData: null,
+            activeCharts: []
         };
 
         // =====================================================================
-        // SETTINGS & COOKIES
+        // SETTINGS & LOCAL STORAGE
         // =====================================================================
-        function setCookie(name, value, days = 365) {
-            const d = new Date();
-            d.setTime(d.getTime() + (days * 24 * 60 * 60 * 1000));
-            document.cookie = `${name}=${value};expires=${d.toUTCString()};path=/`;
-        }
-
-        function getCookie(name) {
-            const value = `; ${document.cookie}`;
-            const parts = value.split(`; ${name}=`);
-            if (parts.length === 2) return parts.pop().split(';').shift();
-        }
-
         function applySettings() {
             const body = document.body;
             
@@ -1237,20 +1228,20 @@
 
         function setTheme(val) {
             state.settings.theme = val;
-            setCookie('sashiko_theme', val);
+            localStorage.setItem('sashiko_theme', val);
             applySettings();
         }
 
         function setColorblind(val) {
             state.settings.colorblind = !!val;
-            setCookie('sashiko_colorblind', state.settings.colorblind ? '1' : '0');
+            localStorage.setItem('sashiko_colorblind', state.settings.colorblind ? '1' : '0');
             applySettings();
         }
 
         function loadSettings() {
-            const theme = getCookie('sashiko_theme');
+            const theme = localStorage.getItem('sashiko_theme');
             if (theme) state.settings.theme = theme;
-            const cb = getCookie('sashiko_colorblind');
+            const cb = localStorage.getItem('sashiko_colorblind');
             if (cb) state.settings.colorblind = cb === '1';
             applySettings();
         }
@@ -1331,6 +1322,7 @@
 
         async function router() {
             const route = parseHash();
+            const oldView = state.view;
             state.view = route.view;
             state.selectedIndex = -1;
 
@@ -1338,6 +1330,12 @@
             if (route.query && typeof route.query.list !== 'undefined') {
                  state.selectedList = route.query.list;
             }
+
+            // Clear ECharts cache if navigating to stats from elsewhere
+            if (oldView !== 'stats' && state.view === 'stats') {
+                state.statsData = null;
+            }
+            clearActiveCharts();
 
             const app = document.getElementById('app');
             app.innerHTML = '<div class="loading">Loading...</div>';
@@ -1399,6 +1397,30 @@
         // =====================================================================
         // UTILITIES
         // =====================================================================
+        function clearActiveCharts() {
+            if (state.activeCharts) {
+                state.activeCharts.forEach(chart => {
+                    try {
+                        chart.dispose();
+                    } catch (e) {
+                        console.error("Failed to dispose chart", e);
+                    }
+                });
+            }
+            state.activeCharts = [];
+        }
+
+        // Global resize listener for ECharts
+        window.addEventListener('resize', () => {
+            if (state.activeCharts) {
+                state.activeCharts.forEach(chart => {
+                    if (chart && typeof chart.resize === 'function') {
+                        chart.resize();
+                    }
+                });
+            }
+        });
+
         function openAbout() {
             document.getElementById('aboutModal').classList.add('open');
         }
@@ -3044,12 +3066,16 @@ ${escapeHtml((data.body || '(no body)').replace(/\n+$/, ''), true, false)}${data
             `;
 
             try {
-                const [timeline, reviewsData, tools] = await Promise.all([
-                    fetch('/api/stats/timeline').then(r => r.json()),
-                    fetch('/api/stats/reviews').then(r => r.json()),
-                    fetch('/api/stats/tools').then(r => r.json())
-                ]);
+                if (!state.statsData) {
+                    const [timeline, reviewsData, tools] = await Promise.all([
+                        fetch('/api/stats/timeline').then(r => r.json()),
+                        fetch('/api/stats/reviews').then(r => r.json()),
+                        fetch('/api/stats/tools').then(r => r.json())
+                    ]);
+                    state.statsData = { timeline, reviewsData, tools };
+                }
 
+                const { timeline, reviewsData, tools } = state.statsData;
                 const reviews = reviewsData.reviews;
                 const historicalTotal = reviewsData.total_reviews;
                 const historicalFailed = reviewsData.total_failures;
@@ -3152,7 +3178,7 @@ ${escapeHtml((data.body || '(no body)').replace(/\n+$/, ''), true, false)}${data
                         ]
                     };
                     chart.setOption(option);
-                    window.addEventListener('resize', () => chart.resize());
+                    state.activeCharts.push(chart);
                 } else {
                     document.getElementById('chart-timeline').innerHTML = '<p class="loading">No timeline data available.</p>';
                 }
@@ -3198,7 +3224,7 @@ ${escapeHtml((data.body || '(no body)').replace(/\n+$/, ''), true, false)}${data
                         series: series
                     };
                     chart.setOption(option);
-                    window.addEventListener('resize', () => chart.resize());
+                    state.activeCharts.push(chart);
                 } else {
                      document.getElementById('chart-review-outcomes').innerHTML = '<p class="loading">No review history available.</p>';
                 }
@@ -3239,7 +3265,7 @@ ${escapeHtml((data.body || '(no body)').replace(/\n+$/, ''), true, false)}${data
                         ]
                     };
                     chart.setOption(option);
-                    window.addEventListener('resize', () => chart.resize());
+                    state.activeCharts.push(chart);
                 } else {
                     document.getElementById('chart-tools').innerHTML = '<p class="loading">No tool usage data available.</p>';
                 }
@@ -3282,7 +3308,7 @@ ${escapeHtml((data.body || '(no body)').replace(/\n+$/, ''), true, false)}${data
                         series: series
                     };
                     chart.setOption(option);
-                    window.addEventListener('resize', () => chart.resize());
+                    state.activeCharts.push(chart);
                 } else {
                     document.getElementById('chart-findings').innerHTML = '<p class="loading">No findings data available.</p>';
                 }
