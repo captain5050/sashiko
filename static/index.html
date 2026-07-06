@@ -1770,10 +1770,10 @@
             }
             return `
                 <div style="display:inline-flex; gap:6px; font-weight:bold; font-size:0.9em; vertical-align:middle;">
-                    <span style="color:var(--sev-critical)" title="Critical">${critical}</span>
-                    <span style="color:var(--sev-high)" title="High">${high}</span>
-                    <span style="color:var(--sev-medium)" title="Medium">${medium}</span>
-                    <span style="color:var(--sev-low)" title="Low">${low}</span>
+                    <span style="color:${critical > 0 ? 'var(--sev-critical)' : 'var(--text-dim)'}" title="Critical">${critical}</span>
+                    <span style="color:${high > 0 ? 'var(--sev-high)' : 'var(--text-dim)'}" title="High">${high}</span>
+                    <span style="color:${medium > 0 ? 'var(--sev-medium)' : 'var(--text-dim)'}" title="Medium">${medium}</span>
+                    <span style="color:${low > 0 ? 'var(--sev-low)' : 'var(--text-dim)'}" title="Low">${low}</span>
                 </div>
             `;
         }
