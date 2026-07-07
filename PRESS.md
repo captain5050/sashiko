@@ -26,6 +26,7 @@ In-depth coverage from the premier Linux news source.
 ## The Linux Foundation
 * [Linux Foundation on X](https://x.com/linuxfoundation/status/2036497032429305989)
 * [Open Source Summit NA 2026 Keynote: Linus Torvalds & Dirk Hohndel](https://youtu.be/fi29pfLcW4I?si=xky2533_zmsrtW-G&t=1414) (discussing AI in kernel development)
+* [Open Source Summit India 2026 Keynote: Linus Torvalds & Dirk Hohndel](https://youtu.be/YKkEe-PxW10?si=hsuxkVEoxUo4ftbN&t=1112) (discussing AI in kernel development)
 
 ## Major Tech News
 Coverage in widely read technical publications.
