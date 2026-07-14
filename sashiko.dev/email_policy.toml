@@ -261,3 +261,7 @@ lists = ["linux-rtc@vger.kernel.org"]
 reply_to_author = true
 send_positive_review = true
 cc = ["linux-rtc@vger.kernel.org", "Alexandre Belloni <alexandre.belloni@bootlin.com>"]
+
+[subsystems.media-ci]
+lists = ["media-ci@linuxtv.org"]
+cc = ["media-ci@linuxtv.org"]
