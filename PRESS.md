@@ -34,8 +34,10 @@ Coverage in widely read technical publications.
 * **ZDNET:** ['I'm not a programmer' anymore: Linus Torvalds on the only two tools he uses now](https://www.zdnet.com/article/open-source-summit-linus-torvalds/)
 * **The Register:** [Sashiko code review linux](https://www.theregister.com/2026/03/20/sashiko_code_review_linux/)
 * **The Register:** [Greg Kroah-Hartman AI kernel](https://www.theregister.com/2026/03/26/greg_kroahhartman_ai_kernel/)
+* **The Register:** [Linus Torvalds tells AI haters to fork off](https://www.theregister.com/ai-and-ml/2026/07/15/linus-torvalds-tells-ai-haters-to-fork-off/5271894)
 * **Phoronix:** [Sashiko Linux AI Code Review](https://www.phoronix.com/news/Sashiko-Linux-AI-Code-Review)
 * **Phoronix:** [Sashiko AI Reviewing Rust Linux](https://www.phoronix.com/news/Sashiko-AI-Reviewing-Rust-Linux)
+* **Phoronix:** [Linux Is Not Anti-AI](https://www.phoronix.com/news/Linux-Is-Not-Anti-AI)
 
 ## Blogs & Other Coverage
 * **Bexelbie:** [What's in a Sashiko review](https://www.bexelbie.com/2026/04/01/whats-in-a-sashiko-review)
