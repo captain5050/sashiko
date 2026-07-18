@@ -827,12 +827,17 @@ async fn run_worker_in_worktree(
         results.push(res?);
     }
 
-    // Aggregate findings and inline reviews
+    // Aggregate findings, inline reviews, history, input context, and concern counts
     let mut combined_findings = Vec::new();
+    let mut combined_dismissed_concerns = Vec::new();
     let mut combined_inline = String::new();
+    let mut combined_history = Vec::new();
+    let mut combined_input_context = String::new();
     let mut total_tokens_in = 0;
     let mut total_tokens_out = 0;
     let mut total_tokens_cached = 0;
+    let mut total_concerns_count = 0;
+    let mut total_dismissed_concerns_count = 0;
 
     for res in results {
         let p_idx = res["patch_index"].as_i64().unwrap_or(0);
@@ -843,14 +848,26 @@ async fn run_worker_in_worktree(
             .cloned()
             .unwrap_or_default();
 
-        if let Some(review) = res.get("review")
-            && let Some(findings) = review.get("findings").and_then(|v| v.as_array())
-        {
-            for f in findings {
-                let mut finding_val = f.clone();
-                finding_val["patch_index"] = json!(p_idx);
-                finding_val["patch_subject"] = json!(patch_subject);
-                combined_findings.push(finding_val);
+        if let Some(review) = res.get("review") {
+            if let Some(findings) = review.get("findings").and_then(|v| v.as_array()) {
+                for f in findings {
+                    let mut finding_val = f.clone();
+                    finding_val["patch_index"] = json!(p_idx);
+                    finding_val["patch_subject"] = json!(patch_subject);
+                    combined_findings.push(finding_val);
+                }
+            }
+            if let Some(dismissed) = review.get("dismissed_concerns").and_then(|v| v.as_array()) {
+                combined_dismissed_concerns.extend(dismissed.clone());
+            }
+            if let Some(cc) = review.get("concerns_count").and_then(|v| v.as_u64()) {
+                total_concerns_count += cc;
+            }
+            if let Some(dcc) = review
+                .get("dismissed_concerns_count")
+                .and_then(|v| v.as_u64())
+            {
+                total_dismissed_concerns_count += dcc;
             }
         }
 
@@ -865,13 +882,29 @@ async fn run_worker_in_worktree(
             combined_inline.push_str(inline.trim());
         }
 
+        if let Some(hist) = res.get("history").and_then(|h| h.as_array()) {
+            combined_history.extend(hist.clone());
+        }
+
+        if let Some(inp) = res["input_context"].as_str()
+            && !inp.is_empty()
+        {
+            if !combined_input_context.is_empty() {
+                combined_input_context.push_str("\n\n");
+            }
+            combined_input_context.push_str(inp);
+        }
+
         total_tokens_in += res["tokens_in"].as_u64().unwrap_or(0);
         total_tokens_out += res["tokens_out"].as_u64().unwrap_or(0);
         total_tokens_cached += res["tokens_cached"].as_u64().unwrap_or(0);
     }
 
     let review_output = json!({
-        "findings": combined_findings
+        "findings": combined_findings,
+        "dismissed_concerns": combined_dismissed_concerns,
+        "concerns_count": total_concerns_count,
+        "dismissed_concerns_count": total_dismissed_concerns_count
     });
 
     let combined_result = json!({
@@ -880,6 +913,8 @@ async fn run_worker_in_worktree(
         "patches": patch_results,
         "review": review_output,
         "inline_review": if combined_inline.is_empty() { "No issues found.".to_string() } else { combined_inline },
+        "history": combined_history,
+        "input_context": combined_input_context,
         "tokens_in": total_tokens_in,
         "tokens_out": total_tokens_out,
         "tokens_cached": total_tokens_cached

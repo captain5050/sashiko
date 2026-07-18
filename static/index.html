@@ -2839,7 +2839,11 @@ ${escapeHtml((data.body || '(no body)').replace(/\n+$/, ''), true, false)}${data
 
             const totalTokens = (data.tokens_in || 0) + (data.tokens_out || 0) + (data.tokens_cached || 0);
             let logs = [];
-            try { logs = JSON.parse(data.logs || '[]'); } catch (e) { }
+            if (Array.isArray(data.logs)) {
+                logs = data.logs;
+            } else if (typeof data.logs === 'string') {
+                try { logs = JSON.parse(data.logs || '[]'); } catch (e) { }
+            }
 
             let logsHtml = '';
             if (!logs.length) {

@@ -536,3 +536,40 @@ async fn test_redirect_www_to_non_www_with_path_and_query() {
         "https://sashiko.dev/api/stats?foo=bar"
     );
 }
+
+#[tokio::test]
+#[ignore]
+async fn test_review_endpoint_returns_logs() {
+    let server = spawn_test_server(false).await;
+
+    server
+        .db
+        .conn
+        .execute(
+            "INSERT INTO patchsets (id, status, subject, author, date) \
+             VALUES (1, 'Pending', '[PATCH] test patch', 'Author <a@b.com>', 1234567890)",
+            (),
+        )
+        .await
+        .unwrap();
+
+    let logs_json = "[{\"role\":\"user\",\"content\":\"test prompt\"}]";
+    server
+        .db
+        .conn
+        .execute(
+            &format!("INSERT INTO reviews (id, patchset_id, status, logs, created_at) VALUES (1, 1, 'Reviewed', '{}', 1234567890)", logs_json),
+            (),
+        )
+        .await
+        .unwrap();
+
+    let resp = reqwest::get(format!("{}/api/review?id=1", server.base_url))
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 200);
+
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["logs"].as_str().unwrap(), logs_json);
+}
