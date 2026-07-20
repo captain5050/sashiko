@@ -107,7 +107,7 @@ impl NntpClient {
             }
 
             let line_raw = String::from_utf8_lossy(&buf);
-            let line = line_raw.trim_end(); // remove \r\n
+            let line = line_raw.trim_end_matches(['\r', '\n']);
 
             if line == "." {
                 break;
@@ -164,7 +164,7 @@ impl NntpClient {
 
             // Convert to string (lossy)
             let line_raw = String::from_utf8_lossy(&buf);
-            let line = line_raw.trim_end(); // remove \r\n
+            let line = line_raw.trim_end_matches(['\r', '\n']);
 
             if line == "." {
                 break;
