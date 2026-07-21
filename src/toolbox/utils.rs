@@ -141,8 +141,10 @@ pub fn format_git_grep_output(stdout: &str, revision: &str, active_files: &[Stri
         .map(|(_, lines)| lines.iter().filter(|l| l.trim() != "--").count())
         .sum();
 
+    const MAX_SUMMARY_FILES: usize = 10;
     let file_summaries: Vec<String> = blocks
         .iter()
+        .take(MAX_SUMMARY_FILES)
         .map(|(path, lines)| {
             let count = lines.iter().filter(|l| l.trim() != "--").count();
             format!(
@@ -153,6 +155,14 @@ pub fn format_git_grep_output(stdout: &str, revision: &str, active_files: &[Stri
             )
         })
         .collect();
+
+    let mut summary = file_summaries.join(", ");
+    if total_files > MAX_SUMMARY_FILES {
+        summary.push_str(&format!(
+            ", ... and {} more files",
+            total_files - MAX_SUMMARY_FILES
+        ));
+    }
 
     let mut result = String::new();
     if total_files > 0 {
@@ -166,7 +176,7 @@ pub fn format_git_grep_output(stdout: &str, revision: &str, active_files: &[Stri
             } else {
                 "matches"
             },
-            file_summaries.join(", ")
+            summary
         ));
     }
 
@@ -229,5 +239,18 @@ mod tests {
         let formatted = format_git_grep_output(stdout, "HEAD", &active_files);
         assert!(formatted.starts_with("Matches found across 3 files (4 total matches): fs/ext4/inline.c (1 match), fs/ext4/dir.c (2 matches), fs/ext4/ext4.h (1 match)"));
         assert!(formatted.contains("[file: fs/ext4/inline.c]"));
+    }
+
+    #[test]
+    fn test_format_git_grep_output_summary_header_truncation() {
+        let mut lines = Vec::new();
+        for i in 1..=15 {
+            lines.push(format!("HEAD:file_{}.c:1:match", i));
+        }
+        let stdout = lines.join("\n");
+        let active_files = Vec::new();
+        let formatted = format_git_grep_output(&stdout, "HEAD", &active_files);
+        assert!(formatted.starts_with("Matches found across 15 files (15 total matches):"));
+        assert!(formatted.contains(", ... and 5 more files"));
     }
 }
