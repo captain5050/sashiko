@@ -482,8 +482,16 @@ pub fn create_provider_from_ai(ai: &AiSettings) -> Result<Arc<dyn AiProvider>> {
                 .as_ref()
                 .and_then(|c| c.base_url.clone())
                 .unwrap_or_else(ollama::OllamaClient::default_base_url);
-            let context_window = ai.ollama.as_ref().and_then(|c| c.context_window_size).unwrap_or_else(|| ollama::OllamaClient::default_context_window_for_model(&model));
-            let max_tokens = ai.ollama.as_ref().and_then(|c| c.max_tokens).unwrap_or(4096);
+            let context_window = ai
+                .ollama
+                .as_ref()
+                .and_then(|c| c.context_window_size)
+                .unwrap_or_else(|| ollama::OllamaClient::default_context_window_for_model(&model));
+            let max_tokens = ai
+                .ollama
+                .as_ref()
+                .and_then(|c| c.max_tokens)
+                .unwrap_or(4096);
             let think_mode = ai.ollama.as_ref().and_then(|c| c.think.clone());
             Ok(Arc::new(ollama::OllamaClient::new(
                 base_url,
@@ -577,8 +585,8 @@ pub mod copilot_cli;
 pub mod devin_cli;
 pub mod gemini;
 pub mod kiro_cli;
-pub mod openai;
 pub mod ollama;
+pub mod openai;
 pub mod proxy;
 pub mod quota;
 pub mod session;

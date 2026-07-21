@@ -67,6 +67,12 @@ pub struct OllamaOptions {
     pub num_predict: Option<i32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub format: Option<String>,
+
+    // TODO: on Ollama, think can either be string with
+    // 4 possible values (None, "medium", "high", or "max")
+    // or a boolean. If false, think mode is disabled (true is default).
+    // How the boolean support can be properly it be mapped here?
+    // one way would be to check if think_mode is equal to String "false" or "off"
     #[serde(skip_serializing_if = "Option::is_none")]
     pub think: Option<String>,
 }
@@ -215,10 +221,7 @@ impl OllamaClient {
         let retry_after = Duration::from_secs(11);
 
         match status.as_u16() {
-            429 => Err(OllamaError::RateLimitExceeded(
-                        retry_after,
-                        error_text,
-                   ))?,
+            429 => Err(OllamaError::RateLimitExceeded(retry_after, error_text))?,
             400 => Err(OllamaError::BadRequest(error_text))?,
             404 => Err(OllamaError::NotFound(error_text))?,
             500 => Err(OllamaError::ServerError(error_text))?,
@@ -291,7 +294,7 @@ fn translate_ollama_request(
     // Build options with temperature and token limit
     let options = OllamaOptions {
         temperature: request.temperature,
-        num_ctx: Some(context_window_size as usize),
+        num_ctx: Some(context_window_size),
         num_predict: Some(max_tokens as i32),
         format: Some("json".to_string()),
         think: think_mode,
@@ -311,13 +314,11 @@ fn translate_ollama_response(resp: OllamaResponse) -> Result<AiResponse> {
 
     let tool_calls = resp.message.tool_calls.map(|tc| {
         tc.into_iter()
-            .map(|t| {
-                ToolCall {
-                    id: format!("ollama_{}", uuid::Uuid::new_v4()),
-                    function_name: t.function.name,
-                    arguments: t.function.arguments,
-                    thought_signature: None,
-                }
+            .map(|t| ToolCall {
+                id: format!("ollama_{}", uuid::Uuid::new_v4()),
+                function_name: t.function.name,
+                arguments: t.function.arguments,
+                thought_signature: None,
             })
             .collect()
     });
@@ -457,7 +458,7 @@ mod tests {
             context_tag: None,
         };
 
-        let ollama_req = translate_ollama_request(request, 128_000, 4096)?;
+        let ollama_req = translate_ollama_request(request, 128_000, 4096, None)?;
 
         assert_eq!(ollama_req.messages.len(), 2);
         assert_eq!(ollama_req.messages[0].role, "system");
@@ -495,7 +496,7 @@ mod tests {
             context_tag: None,
         };
 
-        let ollama_req = translate_ollama_request(request, 128_000, 4096)?;
+        let ollama_req = translate_ollama_request(request, 128_000, 4096, None)?;
 
         assert_eq!(ollama_req.messages.len(), 1);
         assert_eq!(ollama_req.messages[0].role, "assistant");
@@ -573,13 +574,11 @@ mod tests {
 
     #[test]
     fn test_error_classification_connection() {
-         let retry_after = Duration::from_secs(11);
+        let retry_after = Duration::from_secs(11);
         let err = OllamaError::TransientError(retry_after, "timeout".to_string());
         assert_eq!(
             err.ai_error_class(),
-            AiErrorClass::Transient {
-                retry_after: retry_after,
-            }
+            AiErrorClass::Transient { retry_after }
         );
     }
 
@@ -597,16 +596,19 @@ mod tests {
 
     #[test]
     fn test_default_base_url() {
-        assert_eq!(
-            OllamaClient::default_base_url(),
-            "http://localhost:11434"
-        );
+        assert_eq!(OllamaClient::default_base_url(), "http://localhost:11434");
     }
 
     #[test]
     fn test_default_context_window() {
-        assert_eq!(OllamaClient::default_context_window_for_model("llama3"), 128_000);
-        assert_eq!(OllamaClient::default_context_window_for_model("mistral"), 128_000);
+        assert_eq!(
+            OllamaClient::default_context_window_for_model("llama3"),
+            128_000
+        );
+        assert_eq!(
+            OllamaClient::default_context_window_for_model("mistral"),
+            128_000
+        );
     }
 
     #[test]
@@ -650,7 +652,7 @@ mod tests {
             context_tag: None,
         };
 
-        let ollama_req = translate_ollama_request(request, 128_000, 2048)?;
+        let ollama_req = translate_ollama_request(request, 128_000, 2048, None)?;
         let options = ollama_req.options.unwrap();
 
         assert_eq!(options.temperature, Some(0.5));
@@ -677,7 +679,7 @@ mod tests {
             context_tag: None,
         };
 
-        let ollama_req = translate_ollama_request(request,128_000, 2048)?;
+        let ollama_req = translate_ollama_request(request, 128_000, 2048, None)?;
         let options = ollama_req.options.unwrap();
 
         assert_eq!(options.temperature, None);
